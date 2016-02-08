@@ -30,32 +30,37 @@ const (
 
 type Flags uint32
 
-type recordHeader struct {
-	bodyLength   uint32
-	flags        Flags
-	bodyChecksum uint32
+type RecordHeader struct {
+	BodyLength   uint32
+	Flags        Flags
+	BodyChecksum uint32
 }
 
-func (header *recordHeader) MarshalBinary() (data []byte, err error) {
-	output := [16]byte{}
-	binary.LittleEndian.PutUint32(output[:4], header.bodyLength)
-	binary.LittleEndian.PutUint32(output[4:8], uint32(header.flags))
-	binary.LittleEndian.PutUint32(output[8:12], header.bodyChecksum)
-	binary.LittleEndian.PutUint32(output[12:16], crc32.ChecksumIEEE(output[:12]))
-	return output[:], nil
-}
-
-func (header *recordHeader) UnmarshalBinary(data []byte) error {
-	if len(data) < recordHeaderSize {
-		return ErrReadBytes
+func (header *RecordHeader) MarshalBinary() (data []byte, err error) {
+	output := &bytes.Buffer{}
+	output.Grow(recordHeaderSize)
+	if err := binary.Write(output, binary.LittleEndian, header); err != nil {
+		return nil, err
 	}
-	headerChecksum := binary.LittleEndian.Uint32(data[12:16])
-	if headerChecksum != crc32.ChecksumIEEE(data[:12]) {
+	if err := binary.Write(output, binary.LittleEndian, crc32.ChecksumIEEE(output.Bytes())); err != nil {
+		return nil, err
+	}
+	return output.Bytes(), nil
+}
+
+func (header *RecordHeader) UnmarshalBinary(data []byte) error {
+	withChecksum := struct {
+		RecordHeader
+		Checksum uint32
+	}{}
+	r := bytes.NewReader(data)
+	if err := binary.Read(r, binary.LittleEndian, &withChecksum); err != nil {
+		return err
+	}
+	if withChecksum.Checksum != crc32.ChecksumIEEE(data[:12]) {
 		return ErrChecksum
 	}
-	header.bodyLength = binary.LittleEndian.Uint32(data[:4])
-	header.flags = Flags(binary.LittleEndian.Uint32(data[4:8]))
-	header.bodyChecksum = binary.LittleEndian.Uint32(data[8:12])
+	*header = withChecksum.RecordHeader
 	return nil
 }
 
@@ -91,35 +96,35 @@ func (rr *Reader) ReadRecord() ([]byte, error) {
 			return nil, rr.err(ErrReadBytes, err)
 		}
 	}
-	header := recordHeader{}
+	header := RecordHeader{}
 	if err := header.UnmarshalBinary(headerBytes[:]); err != nil {
 		return nil, rr.err(err, nil)
 	}
-	rawBytes := make([]byte, header.bodyLength)
-	if size, err := rr.bytesReader.Read(rawBytes); err != nil || uint32(size) != header.bodyLength {
+	rawBytes := make([]byte, header.BodyLength)
+	if size, err := rr.bytesReader.Read(rawBytes); err != nil || uint32(size) != header.BodyLength {
 		return nil, rr.err(ErrReadBytes, err)
 	}
 
-	if rr.Options&BodyChecksum == BodyChecksum && header.flags&BodyChecksum == BodyChecksum {
-		if header.bodyChecksum != crc32.ChecksumIEEE(rawBytes) {
+	if rr.Options&BodyChecksum == BodyChecksum && header.Flags&BodyChecksum == BodyChecksum {
+		if header.BodyChecksum != crc32.ChecksumIEEE(rawBytes) {
 			return nil, rr.err(ErrChecksum, nil)
 		}
 	}
 
-	if header.flags&GzipCompress == GzipCompress {
+	if header.Flags&GzipCompress == GzipCompress {
 		gzipReader, err := gzip.NewReader(bytes.NewReader(rawBytes))
 		if err != nil {
 			return nil, rr.err(ErrReadBytes, err)
 		}
 		defer gzipReader.Close()
 		buf := &bytes.Buffer{}
-		buf.Grow(int(header.bodyLength * 2))
+		buf.Grow(int(header.BodyLength * 2))
 		_, err = io.Copy(buf, gzipReader)
 		if err != nil {
 			return nil, rr.err(ErrReadBytes, err)
 		}
 		return buf.Bytes(), nil
-	} else if header.flags&SnappyCompress == SnappyCompress {
+	} else if header.Flags&SnappyCompress == SnappyCompress {
 		uncompressed, err := snappy.Decode(nil, rawBytes)
 		if err != nil {
 			return nil, rr.err(ErrReadBytes, err)
@@ -173,12 +178,12 @@ func (rw *Writer) WriteRecord(data []byte, additionalFlags Flags) (size int, err
 		compressedData = data
 	}
 
-	header := recordHeader{
-		bodyLength: uint32(len(compressedData)),
-		flags:      flags,
+	header := RecordHeader{
+		BodyLength: uint32(len(compressedData)),
+		Flags:      flags,
 	}
 	if flags&BodyChecksum == BodyChecksum {
-		header.bodyChecksum = crc32.ChecksumIEEE(compressedData)
+		header.BodyChecksum = crc32.ChecksumIEEE(compressedData)
 	}
 	headerBin, err := header.MarshalBinary()
 	if err != nil {
