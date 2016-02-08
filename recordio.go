@@ -150,12 +150,13 @@ func (rw *Writer) err(err error, bytesWriterError error) error {
 	return err
 }
 
-func (rw *Writer) WriteRecord(data []byte) (size int, err error) {
+func (rw *Writer) WriteRecord(data []byte, additionalFlags Flags) (size int, err error) {
 	if rw.LastError != nil {
 		return 0, rw.LastError
 	}
 	compressedData := data
-	if rw.Options&GzipCompress == GzipCompress {
+	flags := additionalFlags | rw.Options
+	if flags&GzipCompress == GzipCompress {
 		buf := bytes.NewBuffer(make([]byte, 0, len(data)))
 		gzipWriter := gzip.NewWriter(buf)
 		defer gzipWriter.Close()
@@ -166,7 +167,7 @@ func (rw *Writer) WriteRecord(data []byte) (size int, err error) {
 			return 0, rw.err(ErrWriteBytes, err)
 		}
 		compressedData = buf.Bytes()
-	} else if rw.Options&SnappyCompress == SnappyCompress {
+	} else if flags&SnappyCompress == SnappyCompress {
 		compressedData = snappy.Encode(nil, data)
 	} else {
 		compressedData = data
@@ -174,9 +175,9 @@ func (rw *Writer) WriteRecord(data []byte) (size int, err error) {
 
 	header := recordHeader{
 		bodyLength: uint32(len(compressedData)),
-		flags:      rw.Options,
+		flags:      flags,
 	}
-	if rw.Options&BodyChecksum == BodyChecksum {
+	if flags&BodyChecksum == BodyChecksum {
 		header.bodyChecksum = crc32.ChecksumIEEE(compressedData)
 	}
 	headerBin, err := header.MarshalBinary()
@@ -198,5 +199,5 @@ func (rw *Writer) WriteRecord(data []byte) (size int, err error) {
 
 // io.Writer
 func (rw *Writer) Write(data []byte) (n int, err error) {
-	return rw.WriteRecord(data)
+	return rw.WriteRecord(data, 0)
 }
