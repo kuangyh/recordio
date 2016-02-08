@@ -26,16 +26,18 @@ const (
 	recordHeaderSize = 16
 )
 
+type Flags uint32
+
 type recordHeader struct {
 	bodyLength   uint32
-	flags        uint32
+	flags        Flags
 	bodyChecksum uint32
 }
 
 func (header *recordHeader) MarshalBinary() (data []byte, err error) {
 	output := [16]byte{}
 	binary.LittleEndian.PutUint32(output[:4], header.bodyLength)
-	binary.LittleEndian.PutUint32(output[4:8], header.flags)
+	binary.LittleEndian.PutUint32(output[4:8], uint32(header.flags))
 	binary.LittleEndian.PutUint32(output[8:12], header.bodyChecksum)
 	binary.LittleEndian.PutUint32(output[12:16], crc32.ChecksumIEEE(output[:12]))
 	return output[:], nil
@@ -50,21 +52,19 @@ func (header *recordHeader) UnmarshalBinary(data []byte) error {
 		return ErrChecksum
 	}
 	header.bodyLength = binary.LittleEndian.Uint32(data[:4])
-	header.flags = binary.LittleEndian.Uint32(data[4:8])
+	header.flags = Flags(binary.LittleEndian.Uint32(data[4:8]))
 	header.bodyChecksum = binary.LittleEndian.Uint32(data[8:12])
 	return nil
 }
 
-type ReaderOptions uint32
-
 type Reader struct {
 	bytesReader      io.Reader
-	Options          ReaderOptions
+	Options          Flags
 	BytesReaderError error
 	LastError        error
 }
 
-func NewReader(reader io.Reader, options ReaderOptions) *Reader {
+func NewReader(reader io.Reader, options Flags) *Reader {
 	return &Reader{
 		bytesReader: reader,
 		Options:     options,
@@ -139,16 +139,14 @@ func (rr *Reader) ReadRecord() ([]byte, error) {
 	}
 }
 
-type WriterOptions uint32
-
 type Writer struct {
 	bytesWriter      io.Writer
-	Options          WriterOptions
+	Options          Flags
 	BytesWriterError error
 	LastError        error
 }
 
-func NewWriter(writer io.Writer, options WriterOptions) *Writer {
+func NewWriter(writer io.Writer, options Flags) *Writer {
 	return &Writer{
 		bytesWriter: writer,
 		Options:     options,
@@ -183,7 +181,7 @@ func (rw *Writer) WriteRecord(data []byte) (size int, err error) {
 
 	header := recordHeader{
 		bodyLength: uint32(len(compressedData)),
-		flags:      uint32(rw.Options),
+		flags:      rw.Options,
 	}
 	if rw.Options&BodyChecksum == BodyChecksum {
 		header.bodyChecksum = crc32.ChecksumIEEE(compressedData)
@@ -203,4 +201,9 @@ func (rw *Writer) WriteRecord(data []byte) (size int, err error) {
 	}
 	totalSize += size
 	return totalSize, nil
+}
+
+// io.Writer
+func (rw *Writer) Write(data []byte) (n int, err error) {
+	return rw.WriteRecord(data)
 }
