@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/binary"
 	"errors"
+	"github.com/golang/snappy"
 	"hash/crc32"
 	"io"
 )
@@ -16,11 +17,12 @@ var (
 )
 
 const (
-	GzipCompress = 1 << iota
-	BodyChecksum = 1 << iota
+	GzipCompress   = 1 << iota
+	SnappyCompress = 1 << iota
+	BodyChecksum   = 1 << iota
 )
 
-const DefaultFlags = BodyChecksum
+const DefaultFlags = BodyChecksum | SnappyCompress
 
 const (
 	recordHeaderSize = 16
@@ -117,6 +119,12 @@ func (rr *Reader) ReadRecord() ([]byte, error) {
 			return nil, rr.err(ErrReadBytes, err)
 		}
 		return buf.Bytes(), nil
+	} else if header.flags&SnappyCompress == SnappyCompress {
+		uncompressed, err := snappy.Decode(nil, rawBytes)
+		if err != nil {
+			return nil, rr.err(ErrReadBytes, err)
+		}
+		return uncompressed, nil
 	} else {
 		return rawBytes, nil
 	}
@@ -158,6 +166,8 @@ func (rw *Writer) WriteRecord(data []byte) (size int, err error) {
 			return 0, rw.err(ErrWriteBytes, err)
 		}
 		compressedData = buf.Bytes()
+	} else if rw.Options&SnappyCompress == SnappyCompress {
+		compressedData = snappy.Encode(nil, data)
 	} else {
 		compressedData = data
 	}
