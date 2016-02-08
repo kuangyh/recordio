@@ -93,7 +93,6 @@ func (rr *Reader) ReadRecord() ([]byte, error) {
 	if err := header.UnmarshalBinary(headerBytes[:]); err != nil {
 		return nil, rr.err(err, nil)
 	}
-
 	rawBytes := make([]byte, header.bodyLength)
 	if size, err := rr.bytesReader.Read(rawBytes); err != nil || uint32(size) != header.bodyLength {
 		return nil, rr.err(ErrReadBytes, err)
@@ -111,29 +110,13 @@ func (rr *Reader) ReadRecord() ([]byte, error) {
 			return nil, rr.err(ErrReadBytes, err)
 		}
 		defer gzipReader.Close()
-		uncompressed := make([]byte, header.bodyLength*2)
-		uncompressedSize := 0
-		var readErr error
-		var size int
-		for readErr == nil {
-			size, readErr = gzipReader.Read(uncompressed[uncompressedSize:])
-			if size == 0 {
-				break
-			}
-			uncompressedSize += size
-			if uncompressedSize >= len(uncompressed) {
-				newBuf := make([]byte, len(uncompressed)*2)
-				copy(newBuf[:len(uncompressed)], uncompressed)
-				uncompressed = newBuf
-			}
-			if readErr != nil {
-				break
-			}
+		buf := &bytes.Buffer{}
+		buf.Grow(int(header.bodyLength * 2))
+		_, err = io.Copy(buf, gzipReader)
+		if err != nil {
+			return nil, rr.err(ErrReadBytes, err)
 		}
-		if !(readErr == nil || readErr == io.EOF || readErr == io.ErrUnexpectedEOF) {
-			return nil, rr.err(ErrReadBytes, readErr)
-		}
-		return uncompressed[:uncompressedSize], nil
+		return buf.Bytes(), nil
 	} else {
 		return rawBytes, nil
 	}
@@ -171,7 +154,7 @@ func (rw *Writer) WriteRecord(data []byte) (size int, err error) {
 		if _, err := gzipWriter.Write(data); err != nil {
 			return 0, rw.err(ErrWriteBytes, err)
 		}
-		if err = gzipWriter.Flush(); err != nil {
+		if err = gzipWriter.Close(); err != nil {
 			return 0, rw.err(ErrWriteBytes, err)
 		}
 		compressedData = buf.Bytes()
