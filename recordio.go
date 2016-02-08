@@ -40,10 +40,10 @@ func (header *RecordHeader) MarshalBinary() (data []byte, err error) {
 	output := &bytes.Buffer{}
 	output.Grow(recordHeaderSize)
 	if err := binary.Write(output, binary.LittleEndian, header); err != nil {
-		return nil, err
+		panic(err)
 	}
 	if err := binary.Write(output, binary.LittleEndian, crc32.ChecksumIEEE(output.Bytes())); err != nil {
-		return nil, err
+		panic(err)
 	}
 	return output.Bytes(), nil
 }
@@ -55,7 +55,7 @@ func (header *RecordHeader) UnmarshalBinary(data []byte) error {
 	}{}
 	r := bytes.NewReader(data)
 	if err := binary.Read(r, binary.LittleEndian, &withChecksum); err != nil {
-		return err
+		panic(err)
 	}
 	if withChecksum.Checksum != crc32.ChecksumIEEE(data[:12]) {
 		return ErrChecksum
