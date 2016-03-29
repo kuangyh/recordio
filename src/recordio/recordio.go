@@ -1,4 +1,4 @@
-package recordio
+package recordio // import "github.com/kuangyh/recordio"
 
 import (
 	"bytes"
