@@ -1,6 +1,6 @@
 // Read/Write variable size record bytes to / from io.Reader / io.Writer, default
 // to use snappy compression.
-
+//
 // Interface and implementation aims for minimize alloc and memory copy.
 package recordio
 
@@ -15,9 +15,9 @@ import (
 )
 
 var (
-	ReadBytesErr  = errors.New("Read bytes error")
-	WriteBytesErr = errors.New("Write bytes error")
-	ChecksumErr   = errors.New("Checksum Error")
+	ErrReadBytes  = errors.New("Read bytes error")
+	ErrWriteBytes = errors.New("Write bytes error")
+	ErrChecksum   = errors.New("Checksum Error")
 )
 
 const (
@@ -54,7 +54,7 @@ func (header *recordHeader) decode(buf []byte) error {
 	}
 	headerChecksum := crc32.ChecksumIEEE(buf[:8])
 	if binary.LittleEndian.Uint32(buf[8:]) != headerChecksum {
-		return ChecksumErr
+		return ErrChecksum
 	}
 	header.bodyLength = binary.LittleEndian.Uint32(buf[0:4])
 	header.flags = Flags(binary.LittleEndian.Uint32(buf[4:8]))
@@ -98,6 +98,28 @@ func (rr *Reader) err(err error) error {
 	return err
 }
 
+func readn(dst []byte, src io.Reader) (err error) {
+	total := len(dst)
+	i := 0
+	for {
+		if i == total {
+			return nil
+		}
+		stepSize, err := src.Read(dst[i:])
+		i += stepSize
+		if err == io.EOF {
+			if i == 0 {
+				return io.EOF
+			} else if i < total {
+				return io.ErrUnexpectedEOF
+			}
+		} else if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (rr *Reader) readBody(header recordHeader, dst []byte) (output []byte, err error) {
 	bodyLength := int(header.bodyLength)
 	if len(dst) < bodyLength+4 {
@@ -105,11 +127,11 @@ func (rr *Reader) readBody(header recordHeader, dst []byte) (output []byte, err 
 	} else {
 		dst = dst[:bodyLength+4]
 	}
-	if size, _ := rr.bytesReader.Read(dst); size != len(dst) {
-		return nil, rr.err(ReadBytesErr)
+	if err = readn(dst, rr.bytesReader); err != nil {
+		return nil, rr.err(err)
 	}
 	if crc32.ChecksumIEEE(dst[:bodyLength]) != binary.LittleEndian.Uint32(dst[bodyLength:]) {
-		return nil, rr.err(ChecksumErr)
+		return nil, rr.err(ErrChecksum)
 	}
 	return dst[:bodyLength], nil
 }
@@ -122,7 +144,7 @@ func (rr *Reader) ReadRecord(dst []byte) (output []byte, err error) {
 		return nil, rr.Err
 	}
 	headerBytes := [recordHeaderStorageSize]byte{}
-	if _, err = rr.bytesReader.Read(headerBytes[:]); err != nil {
+	if err = readn(headerBytes[:], rr.bytesReader); err != nil {
 		return nil, rr.err(err)
 	}
 	header := recordHeader{}
@@ -138,7 +160,7 @@ func (rr *Reader) ReadRecord(dst []byte) (output []byte, err error) {
 	}
 	buf, err := snappy.Decode(dst, rawBuf)
 	if err != nil {
-		return nil, rr.err(ReadBytesErr)
+		return nil, rr.err(ErrReadBytes)
 	}
 	return buf, nil
 }
@@ -178,16 +200,16 @@ func (rw *Writer) WriteRecord(data []byte, flags Flags) error {
 	var headerBuf [recordHeaderStorageSize]byte
 	header.encode(headerBuf[:])
 	if size, _ := rw.bytesWriter.Write(headerBuf[:]); size != recordHeaderStorageSize {
-		return rw.err(WriteBytesErr)
+		return rw.err(ErrWriteBytes)
 	}
 	bodyWriter := checksumWriter{writer: rw.bytesWriter, crc: crc32.NewIEEE()}
 	if size, _ := bodyWriter.Write(data); size != len(data) {
-		return rw.err(WriteBytesErr)
+		return rw.err(ErrWriteBytes)
 	}
 	var checksumBuf [4]byte
 	binary.LittleEndian.PutUint32(checksumBuf[:], bodyWriter.checksum())
 	if size, _ := rw.bytesWriter.Write(checksumBuf[:]); size != len(checksumBuf) {
-		return rw.err(WriteBytesErr)
+		return rw.err(ErrWriteBytes)
 	}
 	return nil
 }
