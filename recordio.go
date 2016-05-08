@@ -98,28 +98,6 @@ func (rr *Reader) err(err error) error {
 	return err
 }
 
-func readn(dst []byte, src io.Reader) (err error) {
-	total := len(dst)
-	i := 0
-	for {
-		if i == total {
-			return nil
-		}
-		stepSize, err := src.Read(dst[i:])
-		i += stepSize
-		if err == io.EOF {
-			if i == 0 {
-				return io.EOF
-			} else if i < total {
-				return io.ErrUnexpectedEOF
-			}
-		} else if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (rr *Reader) readBody(header recordHeader, dst []byte) (output []byte, err error) {
 	bodyLength := int(header.bodyLength)
 	if len(dst) < bodyLength+4 {
@@ -127,7 +105,7 @@ func (rr *Reader) readBody(header recordHeader, dst []byte) (output []byte, err 
 	} else {
 		dst = dst[:bodyLength+4]
 	}
-	if err = readn(dst, rr.bytesReader); err != nil {
+	if _, err = io.ReadFull(rr.bytesReader, dst); err != nil {
 		return nil, rr.err(err)
 	}
 	if crc32.ChecksumIEEE(dst[:bodyLength]) != binary.LittleEndian.Uint32(dst[bodyLength:]) {
@@ -144,7 +122,7 @@ func (rr *Reader) ReadRecord(dst []byte) (output []byte, err error) {
 		return nil, rr.Err
 	}
 	headerBytes := [recordHeaderStorageSize]byte{}
-	if err = readn(headerBytes[:], rr.bytesReader); err != nil {
+	if _, err = io.ReadFull(rr.bytesReader, headerBytes[:]); err != nil {
 		return nil, rr.err(err)
 	}
 	header := recordHeader{}
